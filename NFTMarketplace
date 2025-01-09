@@ -1,0 +1,327 @@
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract NFTMarketplace {
+    struct NFT {
+        uint256 id;
+        string name;
+        address owner;
+        uint256 price; // Price in Ether (ETH), converted from Wei when interacting.
+        bool forSale;
+    }
+
+    struct Auction {
+        uint256 id;
+        uint256 nftId;
+        address owner;
+        uint256 basePrice; // Base price in Ether (ETH).
+        bool active;
+    }
+
+    struct Bid {
+        uint256 id;
+        uint256 auctionId;
+        address bidder;
+        uint256 amount; // Bid amount in Ether (ETH).
+    }
+
+    struct NFTDetails {
+        uint256 id;
+        string name;
+        address owner;
+        uint256 priceInEth;
+        bool forSale;
+    }
+
+    // Add this new struct after other structs
+    struct BidHistory {
+        uint256 id;
+        uint256 auctionId;
+        address bidder;
+        uint256 amount;
+        string status; // "Sold", "Not Sold", or "Pending"
+    }
+
+    uint256 public nftCounter;
+    uint256 public auctionCounter;
+    uint256 public bidCounter;
+    uint256 public constant ROYALTY_PERCENTAGE = 5; // Royalties (5% of sale price).
+    uint256 public constant MARKETPLACE_FEE_PERCENTAGE = 3; // Marketplace fee (3%).
+
+    mapping(uint256 => NFT) public nfts;
+    mapping(uint256 => Auction) public auctions;
+    mapping(uint256 => Bid[]) public bids;
+
+    // Add new mapping to store NFT IDs by name
+    mapping(string => uint256) private  nftsByName;
+
+    event NFTMinted(uint256 indexed id, string name, address owner);
+    event NFTListedForSale(uint256 indexed id, uint256 priceInEth);
+    event NFTSaleCanceled(uint256 indexed id);
+    event NFTPurchased(uint256 indexed id, address buyer, address seller, uint256 priceInEth);
+    event AuctionListed(uint256 indexed id, uint256 nftId, uint256 basePriceInEth);
+    event AuctionCanceled(uint256 indexed id);
+    event BidPlaced(uint256 indexed auctionId, uint256 bidId, address bidder, uint256 amountInEth);
+    event BidAccepted(uint256 indexed auctionId, uint256 bidId, uint256 amountInEth);
+    event BidRejected(uint256 indexed auctionId, uint256 bidId);
+
+    //chatgpt
+    event DebugValues(uint256 msgValue, uint256 royalty, uint256 marketplaceFee, uint256 sellerAmount);
+
+    // Add this new event after other events
+    event NewBidReceived(uint256 indexed auctionId, uint256 bidId, address bidder, uint256 amount, address seller);
+
+    // Modified mintNFT function to store name mapping
+    function mintNFT(string memory _name) external {
+        require(nftsByName[_name] == 0, "NFT with this name already exists");
+        nftCounter++;
+        nfts[nftCounter] = NFT(nftCounter, _name, msg.sender, 0, false);
+        nftsByName[_name] = nftCounter;
+        emit NFTMinted(nftCounter, _name, msg.sender);
+    }
+
+    // List NFT for sale.
+    function listNFTForSale(uint256 _id, uint256 _priceInEth) external {
+        NFT storage nft = nfts[_id];
+        require(msg.sender == nft.owner, "Not the owner of the NFT");
+        require(!nft.forSale, "NFT already listed for sale");
+
+        nft.price = _priceInEth * 1 ether; // Convert Ether to Wei for storage.
+        nft.forSale = true;
+        emit NFTListedForSale(_id, _priceInEth);
+    }
+
+    // View NFTs listed for sale.
+    function viewActiveSales() external view returns (NFT[] memory) {
+        uint256 count;
+        for (uint256 i = 1; i <= nftCounter; i++) {
+            if (nfts[i].forSale) {
+                count++;
+            }
+        }
+
+        NFT[] memory activeSales = new NFT[](count);
+        uint256 index;
+        for (uint256 i = 1; i <= nftCounter; i++) {
+            if (nfts[i].forSale) {
+                activeSales[index] = nfts[i];
+                index++;
+            }
+        }
+        return activeSales;
+    }
+
+    // Cancel sale of NFT.
+    function cancelNFTSale(uint256 _id) external {
+        NFT storage nft = nfts[_id];
+        require(msg.sender == nft.owner, "Not the owner of the NFT");
+        require(nft.forSale, "NFT is not listed for sale");
+
+        nft.forSale = false;
+        emit NFTSaleCanceled(_id);
+    }
+
+    // Buy NFT listed for sale.
+    function buyNFT(uint256 _id) external payable {
+        NFT storage nft = nfts[_id];
+        require(nft.forSale, "NFT is not for sale");
+        require(msg.value == nft.price, "Incorrect price sent (in Wei)");
+
+        address seller = nft.owner;
+        // uint256 royalty = (msg.value * ROYALTY_PERCENTAGE) / 100;
+        // uint256 marketplaceFee = (msg.value * MARKETPLACE_FEE_PERCENTAGE) / 100;
+        // uint256 sellerAmount = msg.value - royalty - marketplaceFee;
+
+        uint256 royalty = (msg.value * ROYALTY_PERCENTAGE) / 100;
+        uint256 marketplaceFee = (msg.value * MARKETPLACE_FEE_PERCENTAGE) / 100;
+        uint256 sellerAmount = msg.value - royalty - marketplaceFee;
+        require(sellerAmount > 0, "Invalid seller amount calculation");
+
+        // Transfer ETH to seller
+        (bool successSeller, ) = payable(seller).call{value: sellerAmount}("");
+        require(successSeller, "Failed to transfer to seller");
+
+        // // Deduct fees and royalties
+        // (bool successMarketplace, ) = payable(address(this)).call{value: royalty + marketplaceFee}("");
+        // require(successMarketplace, "Failed to transfer fees");
+
+        address  marketplaceWallet = payable(msg.sender); /* marketplace owner's wallet address */
+        (bool successMarketplace, ) = payable(marketplaceWallet).call{value: royalty + marketplaceFee}("");
+        require(successMarketplace, "Failed to transfer fees");
+
+        // Update NFT ownership
+        nft.owner = msg.sender;
+        nft.forSale = false;
+
+        emit NFTPurchased(_id, msg.sender, seller, nft.price / 1 ether); // Emit price in ETH.
+    
+        //chatgpt
+        emit DebugValues(msg.value, royalty, marketplaceFee, sellerAmount);
+    }
+
+    // List NFT for auction.
+    function listNFTForAuction(uint256 _id, uint256 _basePriceInEth) external {
+        NFT storage nft = nfts[_id];
+        require(msg.sender == nft.owner, "Not the owner of the NFT");
+        require(!nft.forSale, "NFT is already listed for sale");
+
+        auctionCounter++;
+        auctions[auctionCounter] = Auction(auctionCounter, _id, msg.sender, _basePriceInEth * 1 ether, true);
+
+        emit AuctionListed(auctionCounter, _id, _basePriceInEth);
+    }
+
+    // Cancel auction.
+    function cancelAuction(uint256 _id) external {
+        Auction storage auction = auctions[_id];
+        require(msg.sender == auction.owner, "Not the owner of the auction");
+        require(auction.active, "Auction is not active");
+
+        auction.active = false;
+        emit AuctionCanceled(_id);
+    }
+
+    // Modify the placeBid function
+    function placeBid(uint256 _auctionId) external payable {
+        Auction storage auction = auctions[_auctionId];
+        require(auction.active, "Auction is not active");
+        require(msg.value > auction.basePrice, "Bid amount must be higher than base price");
+
+        bidCounter++;
+        bids[_auctionId].push(Bid(bidCounter, _auctionId, msg.sender, msg.value));
+
+        emit BidPlaced(_auctionId, bidCounter, msg.sender, msg.value / 1 ether);
+        // Add this new event emission
+        emit NewBidReceived(_auctionId, bidCounter, msg.sender, msg.value / 1 ether, auction.owner);
+    }
+
+    // Add this new function after placeBid
+    function getAuctionBids(uint256 _auctionId) external view returns (Bid[] memory) {
+        Auction storage auction = auctions[_auctionId];
+        require(msg.sender == auction.owner, "Only auction owner can view all bids");
+        return bids[_auctionId];
+    }
+
+    // Accept a bid.
+    function acceptBid(uint256 _auctionId, uint256 _bidId) external {
+        Auction storage auction = auctions[_auctionId];
+        require(msg.sender == auction.owner, "Not the owner of the auction");
+        require(auction.active, "Auction is not active");
+
+        Bid memory acceptedBid;
+        bool bidFound = false;
+        Bid[] storage auctionBids = bids[_auctionId];
+        
+        for (uint256 i = 0; i < auctionBids.length; i++) {
+            if (auctionBids[i].id == _bidId) {
+                acceptedBid = auctionBids[i];
+                bidFound = true;
+                break;
+            }
+        }
+        require(bidFound, "Bid not found");
+
+        uint256 royalty = (acceptedBid.amount * ROYALTY_PERCENTAGE) / 100;
+        uint256 marketplaceFee = (acceptedBid.amount * MARKETPLACE_FEE_PERCENTAGE) / 100;
+        uint256 sellerAmount = acceptedBid.amount - royalty - marketplaceFee;
+
+        // Transfer amount to seller
+        (bool successSeller, ) = payable(auction.owner).call{value: sellerAmount}("");
+        require(successSeller, "Failed to transfer to seller");
+
+        // Transfer fees to marketplace
+        address marketplaceWallet = payable(msg.sender);
+        (bool successMarketplace, ) = payable(marketplaceWallet).call{value: royalty + marketplaceFee}("");
+        require(successMarketplace, "Failed to transfer fees");
+
+        // Update NFT ownership
+        nfts[auction.nftId].owner = acceptedBid.bidder;
+        auction.active = false;
+
+        emit BidAccepted(_auctionId, _bidId, acceptedBid.amount / 1 ether);
+    }
+
+    // Reject a bid.
+    function rejectBid(uint256 _auctionId, uint256 _bidId) external {
+        Auction storage auction = auctions[_auctionId];
+        require(msg.sender == auction.owner, "Not the owner of the auction");
+        require(auction.active, "Auction is not active");
+
+        // Find the bid to refund
+        Bid memory rejectedBid;
+        bool bidFound = false;
+        Bid[] storage auctionBids = bids[_auctionId];
+        
+        for (uint256 i = 0; i < auctionBids.length; i++) {
+            if (auctionBids[i].id == _bidId) {
+                rejectedBid = auctionBids[i];
+                bidFound = true;
+                break;
+            }
+        }
+        require(bidFound, "Bid not found");
+
+        // Refund the bid amount to the bidder
+        (bool success, ) = payable(rejectedBid.bidder).call{value: rejectedBid.amount}("");
+        require(success, "Failed to refund bid amount");
+
+        emit BidRejected(_auctionId, _bidId);
+    }
+
+    // Replace the existing viewBiddingHistory function with this new version
+    function viewBiddingHistory(uint256 _auctionId) external view returns (BidHistory[] memory) {
+        Bid[] storage auctionBids = bids[_auctionId];
+        BidHistory[] memory history = new BidHistory[](auctionBids.length);
+        Auction storage auction = auctions[_auctionId];
+
+        for (uint256 i = 0; i < auctionBids.length; i++) {
+            string memory status;
+            if (!auction.active) {
+                // If auction is closed and this bid's NFT owner matches the bidder
+                if (nfts[auction.nftId].owner == auctionBids[i].bidder) {
+                    status = "Sold";
+                } else {
+                    status = "Not Sold";
+                }
+            } else {
+                status = "Pending";
+            }
+
+            history[i] = BidHistory(
+                auctionBids[i].id,
+                auctionBids[i].auctionId,
+                auctionBids[i].bidder,
+                auctionBids[i].amount,
+                status
+            );
+        }
+        return history;
+    }
+
+    // Get user's latest bid ID for an auction
+    function getMyLatestBidId(uint256 _auctionId) external view returns (uint256) {
+        Bid[] storage auctionBids = bids[_auctionId];
+        for(uint256 i = auctionBids.length; i > 0; i--) {
+            if(auctionBids[i-1].bidder == msg.sender) {
+                return auctionBids[i-1].id;
+            }
+        }
+        revert("No bids found for this user");
+    }
+
+    // New function to get detailed NFT information by name
+    function getNFTDetailsByName(string memory _name) external view returns (NFTDetails memory) {
+        uint256 nftId = nftsByName[_name];
+        require(nftId != 0, "NFT with this name does not exist");
+        
+        NFT storage nft = nfts[nftId];
+        return NFTDetails(
+            nft.id,
+            nft.name,
+            nft.owner,
+            nft.price / 1 ether, // Convert Wei to ETH for better readability
+            nft.forSale
+        );
+    }
+}
