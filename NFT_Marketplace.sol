@@ -134,7 +134,7 @@ contract NFTMarketplace {
     function finalizeAuction(uint256 nftId) public {
         Auction storage auction = auctions[nftId];
         require(auction.isActive, "Auction is not active");
-        require(block.timestamp > auction.endTime, "Auction has not ended yet"); // Ensure auction has ended
+        require(block.timestamp > auction.endTime, "Auction has not ended yet");
 
         auction.isActive = false;
         nftInAuction[nftId] = false;
