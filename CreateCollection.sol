@@ -16,7 +16,8 @@ contract CreateCollection {
         uint256 tokenId;
         address owner;
         bool exists;
-        uint256 price; // Add price to NFT struct
+        uint256 price;
+        uint256 collectionId; // Add collectionId to NFT struct
     }
 
     mapping(uint256 => Collection) private collections;
@@ -25,8 +26,8 @@ contract CreateCollection {
     mapping(uint256 => uint256[]) private collectionNFTs;
 
     event CollectionCreated(uint256 indexed collectionId, string name, address owner);
-    event NFTMinted(address indexed owner, uint256 indexed tokenId, uint256 price); // Add price to event
-    event CollectionDeactivated(uint256 indexed collectionId); // Add event for deactivating collection
+    event NFTMinted(address indexed owner, uint256 indexed tokenId, uint256 price);
+    event CollectionDeactivated(uint256 indexed collectionId);
 
     function _generateRandomId() private view returns (uint256) {
         return uint256(keccak256(abi.encodePacked(block.timestamp, block.difficulty, msg.sender)));
@@ -53,11 +54,11 @@ contract CreateCollection {
         return collectionId;
     }
 
-    function mintNFT(uint256 _collectionId, string memory _name, uint256 _price_in_Wei) external { // Add price parameter
+    function mintNFT(uint256 _collectionId, string memory _name, uint256 _price_in_Wei) external {
         require(bytes(_name).length > 0, "NFT name cannot be empty");
         require(collections[_collectionId].owner == msg.sender, "You don't own this collection");
         require(collections[_collectionId].isActive, "Collection is not active");
-        require(_price_in_Wei > 0, "Price must be greater than zero"); // Ensure price is greater than zero
+        require(_price_in_Wei > 0, "Price must be greater than zero");
 
         uint256 tokenId = _generateRandomId();
         require(!nfts[tokenId].exists, "NFT ID collision");
@@ -67,12 +68,13 @@ contract CreateCollection {
             tokenId: tokenId,
             owner: msg.sender,
             exists: true,
-            price: _price_in_Wei// Set price  // Set price in Wei
+            price: _price_in_Wei,
+            collectionId: _collectionId // Set collectionId
         });
 
         collectionNFTs[_collectionId].push(tokenId);
 
-        emit NFTMinted(msg.sender, tokenId, _price_in_Wei); // Emit price
+        emit NFTMinted(msg.sender, tokenId, _price_in_Wei);
     }
 
     function deactivateCollection(uint256 _collectionId) external {
@@ -98,17 +100,15 @@ contract CreateCollection {
         return userCollections[_user];
     }
 
-    function getNFTDetails(uint256 tokenId) external view returns (string memory, address, bool, uint256) {
+    function getNFTDetails(uint256 tokenId) external view returns (string memory, address, bool, uint256, uint256, uint256) {
         require(nfts[tokenId].exists, "NFT does not exist");
         NFT memory nft = nfts[tokenId];
-        return (nft.name, nft.owner, nft.exists, nft.price); // Include price in the return values
+        return (nft.name, nft.owner, nft.exists, nft.price, tokenId, nft.collectionId); // Use nft.collectionId
     }
 
     function transferNFT(uint256 tokenId, address to) external {
         require(nfts[tokenId].exists, "NFT does not exist");
-       
-
+        // require(nfts[tokenId].owner == msg.sender, "You are not the owner of this NFT");
         nfts[tokenId].owner = to;
     }
 }
-
